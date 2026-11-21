@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FocusPulse</title>
+
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.7.7/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.7/babel.min.js"></script>
+
+  <!-- ================= CSS ================= -->
+  <style>
+    body {
+      margin: 0;
+      background: #0f1424;
+      color: #e8ebf7;
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    }
+    .panel-kiri {
+      background: radial-gradient(circle at 50% 30%, #1d2447 0%, #0f1424 70%);
+      border-right: 1px solid #27304d;
+    }
+    .panel-kanan { background: #151b30; }
+    .jam {
+      font-size: clamp(4rem, 12vw, 7rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      font-variant-numeric: tabular-nums;
+      color: #fff;
+    }
+    .track { height: 10px; border-radius: 999px; background: #27304d; overflow: hidden; }
+    .fill { height: 100%; background: #8b7cff; transition: width 0.9s linear; }
+    .btn {
+      padding: 0.6rem 1.2rem;
+      border-radius: 0.6rem;
+      font-weight: 600;
+      border: 1px solid #27304d;
+      color: #e8ebf7;
+      background: transparent;
+      cursor: pointer;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-utama, .btn-aktif { background: #8b7cff; border-color: #8b7cff; color: #fff; }
+    .input {
+      padding: 0.65rem 0.85rem;
+      border-radius: 0.6rem;
+      border: 1px solid #27304d;
+      background: #0f1424;
+      color: #e8ebf7;
+      color-scheme: dark;
+    }
+    .tugas {
+      display: flex;
+      flex-direction: row;
+      gap: 1rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.9rem 1rem;
+      border-radius: 0.7rem;
+      background: #0f1424;
+      border: 1px solid #27304d;
+      border-left: 5px solid var(--warna);
+    }
+    .lencana { color: var(--warna); font-size: 0.75rem; font-weight: 600; }
+    .terlambat { --warna: #f43f5e; }
+    .segera { --warna: #fb923c; }
+    .hari-ini { --warna: #facc15; }
+    .nanti { --warna: #34d399; }
+    .selesai { --warna: #64748b; }
+  </style>
+</head>
+
+<!-- ================= HTML ================= -->
+<body>
+  <div id="root"></div>
+
+  <!-- ================= JAVASCRIPT ================= -->
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // API palsu: axios dialihkan ke memori browser, tidak ada server sungguhan
+    const db = { tasks: [], counter: 0 };
+
+    function reply(config, status, data) {
+      const response = { data, status, statusText: String(status), headers: {}, config };
+      if (status >= 200 && status < 300) return response;
+      throw new axios.AxiosError("HTTP " + status, null, config, null, response);
+    }
+
+    function handleRequest(config) {
+      const method = config.method.toLowerCase();
+      const path = config.url;
+      const body = config.data ? JSON.parse(config.data) : {};
+
+      if (path === "/api/tasks" && method === "get") {
+        return reply(config, 200, db.tasks.map((t) => ({ ...t })));
+      }
+
+      if (path === "/api/tasks" && method === "post") {
+        if (!body.title || Number.isNaN(new Date(body.dueAt).getTime())) {
+          return reply(config, 400, { error: "DATA_TIDAK_VALID" });
+        }
+        db.counter += 1;
+        const newTask = {
+          id: db.counter,
+          title: body.title.trim(),
+          dueAt: body.dueAt,
+          notified: false,
+          isCompleted: false,
+        };
+        db.tasks.push(newTask);
+        return reply(config, 201, { ...newTask });
+      }
+
+      if (path === "/api/tasks/due" && method === "get") {
+        const now = new Date();
+        const due = db.tasks.filter(
+          (t) => !t.notified && !t.isCompleted && new Date(t.dueAt) <= now
+        );
+        return reply(config, 200, due.map((t) => ({ ...t })));
+      }
+
+      const match = path.match(/^\/api\/tasks\/(\d+)$/);
+      if (match) {
+        const index = db.tasks.findIndex((t) => t.id === Number(match[1]));
+        if (index === -1) return reply(config, 404, { error: "NOT_FOUND" });
+
+        if (method === "patch") {
+          const task = db.tasks[index];
+          if ("notified" in body) task.notified = body.notified;
+          if ("isCompleted" in body) task.isCompleted = body.isCompleted;
+          return reply(config, 200, { ...task });
+        }
+        if (method === "delete") {
+          db.tasks.splice(index, 1);
+          return reply(config, 200, { success: true });
+        }
+      }
+
+      return reply(config, 404, { error: "NOT_FOUND" });
+    }
+
+    const api = axios.create({
+      adapter: (config) =>
+        new Promise((resolve, reject) => {
+          setTimeout(() => {
+            try {
+              resolve(handleRequest(config));
+            } catch (err) {
+              reject(err);
+            }
+          }, 250);
+        }),
+    });
+
+    const MODES = {
+      focus: { label: "Fokus", seconds: 25 * 60 },
+      break: { label: "Istirahat", seconds: 5 * 60 },
+      demo: { label: "Demo Cepat", seconds: 10 },
+    };
+    const JAM = 60 * 60 * 1000;
+
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function getUrgency(task, now) {
+      if (task.isCompleted) {
+        return { kelas: "selesai", teks: "Selesai" };
+      }
+
+      const selisih = new Date(task.dueAt).getTime() - now;
+
+      if (selisih < 0) {
+        return { kelas: "terlambat", teks: "Terlambat" };
+      } else if (selisih <= JAM) {
+        return { kelas: "segera", teks: "Kurang dari 1 jam" };
+      } else if (selisih <= 24 * JAM) {
+        return { kelas: "hari-ini", teks: "Hari ini" };
+      } else {
+        return { kelas: "nanti", teks: "Masih lama" };
+      }
+    }
+
+    function notify(title, body, tag) {
+      if (!("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+
+      const n = new Notification(title, { body, tag });
+      n.onclick = () => {
+        window.focus();
+        n.close();
+      };
+    }
+
+    function App() {
+      const [mode, setMode] = useState("focus");
+      const [secondsLeft, setSecondsLeft] = useState(MODES.focus.seconds);
+      const [running, setRunning] = useState(false);
+
+      const [tasks, setTasks] = useState([]);
+      const [title, setTitle] = useState("");
+      const [date, setDate] = useState("");
+      const [time, setTime] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [now, setNow] = useState(() => Date.now());
+      const [izin, setIzin] = useState("default");
+
+      const total = MODES[mode].seconds;
+      const progress = ((total - secondsLeft) / total) * 100;
+
+      const sorted = [...tasks].sort((a, b) => {
+        if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
+        return new Date(a.dueAt) - new Date(b.dueAt);
+      });
+      const activeTask = sorted.find((t) => !t.isCompleted);
+
+      async function loadTasks() {
+        try {
+          const res = await api.get("/api/tasks");
+          setTasks(res.data);
+        } catch (err) {
+          setError("Gagal memuat tugas.");
+        }
+      }
+
+      // Hitung mundur, clearInterval jalan saat effect dibersihkan
+      useEffect(() => {
+        if (!running) return;
+        const id = setInterval(() => {
+          setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
+        }, 1000);
+        return () => clearInterval(id);
+      }, [running]);
+
+      useEffect(() => {
+        if (running && secondsLeft === 0) {
+          setRunning(false);
+          notify("Sesi " + MODES[mode].label + " selesai", "Waktunya ganti mode.", "timer");
+        }
+      }, [running, secondsLeft, mode]);
+
+      // Polling tugas jatuh tempo tiap 15 detik
+      useEffect(() => {
+        if ("Notification" in window) setIzin(Notification.permission);
+
+        async function check() {
+          setNow(Date.now());
+          try {
+            const res = await api.get("/api/tasks/due");
+            for (const task of res.data) {
+              notify("Waktunya mengerjakan tugas", task.title, "task-" + task.id);
+              await api.patch("/api/tasks/" + task.id, { notified: true });
+            }
+            await loadTasks();
+          } catch (err) {
+            console.error("Polling gagal", err);
+          }
+        }
+
+        check();
+        const id = setInterval(check, 15 * 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      function changeMode(next) {
+        setRunning(false);
+        setMode(next);
+        setSecondsLeft(MODES[next].seconds);
+      }
+
+      function handleStart() {
+        if (secondsLeft === 0) setSecondsLeft(total);
+        setRunning(true);
+      }
+
+      function handleReset() {
+        setRunning(false);
+        setSecondsLeft(total);
+      }
+
+      async function askPermission() {
+        if (!("Notification" in window)) return;
+        setIzin(await Notification.requestPermission());
+      }
+
+      async function handleAdd(e) {
+        e.preventDefault();
+        if (loading) return;
+        if (!title.trim() || !date || !time) {
+          setError("Isi judul, tanggal, dan jam dulu.");
+          return;
+        }
+
+        setLoading(true);
+        setError(null);
+        try {
+          const dueAt = new Date(date + "T" + time).toISOString();
+          const res = await api.post("/api/tasks", { title, dueAt });
+          setTasks([...tasks, res.data]);
+          setTitle("");
+          setDate("");
+          setTime("");
+        } catch (err) {
+          setError(err.response ? "Data ditolak (kode " + err.response.status + ")." : "Terjadi kesalahan.");
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      async function handleToggle(task) {
+        try {
+          const res = await api.patch("/api/tasks/" + task.id, { isCompleted: !task.isCompleted });
+          setTasks(tasks.map((t) => (t.id === task.id ? res.data : t)));
+        } catch (err) {
+          setError("Gagal memperbarui tugas.");
+        }
+      }
+
+      async function handleDelete(id) {
+        try {
+          await api.delete("/api/tasks/" + id);
+          setTasks(tasks.filter((t) => t.id !== id));
+        } catch (err) {
+          setError("Gagal menghapus tugas.");
+        }
+      }
+
+      return (
+        <main className="flex min-h-screen flex-col md:flex-row">
+          <section className="panel-kiri flex flex-1 flex-col items-center justify-center gap-8 p-8 md:w-1/2">
+            <h1 className="text-3xl font-bold">FocusPulse</h1>
+
+            <div className="flex gap-2">
+              {Object.entries(MODES).map(([key, m]) => (
+                <button
+                  key={key}
+                  onClick={() => changeMode(key)}
+                  className={"btn " + (mode === key ? "btn-aktif" : "")}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="jam">
+              {pad(Math.floor(secondsLeft / 60))}:{pad(secondsLeft % 60)}
+            </div>
+
+            <div className="w-full max-w-md">
+              <div className="track">
+                <div className="fill" style={{ width: progress + "%" }} />
+              </div>
+              <p className="mt-2 text-right text-xs text-slate-400">{Math.round(progress)}%</p>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={handleStart} disabled={running} className="btn btn-utama">Mulai</button>
+              <button onClick={() => setRunning(false)} disabled={!running} className="btn">Jeda</button>
+              <button onClick={handleReset} className="btn">Reset</button>
+            </div>
+
+            <div className="w-full max-w-md rounded-lg border border-slate-700 p-4">
+              <p className="text-xs text-slate-400">Tugas aktif</p>
+              <p className="mt-1 text-lg font-semibold">
+                {activeTask ? activeTask.title : "Belum ada tugas"}
+              </p>
+            </div>
+          </section>
+
+          <section className="panel-kanan flex flex-1 flex-col gap-5 p-8 md:w-1/2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Antrean Tugas</h2>
+              {izin === "default" && (
+                <button onClick={askPermission} className="btn text-xs">Aktifkan notifikasi</button>
+              )}
+            </div>
+
+            <form onSubmit={handleAdd} className="flex flex-col gap-3">
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Judul tugas"
+                className="input"
+              />
+              <div className="flex flex-row gap-3">
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input flex-1" />
+                <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="input flex-1" />
+              </div>
+              <button type="submit" disabled={loading} className="btn btn-utama">
+                {loading ? "Menyimpan..." : "Tambah tugas"}
+              </button>
+              {error && <p className="text-sm text-rose-400">{error}</p>}
+            </form>
+
+            <div className="flex flex-col gap-3">
+              {sorted.length === 0 && <p className="text-slate-500">Antrean masih kosong.</p>}
+
+              {sorted.map((task) => {
+                const urg = getUrgency(task, now);
+                return (
+                  <article key={task.id} className={"tugas " + urg.kelas}>
+                    <div className="min-w-0">
+                      <p className={task.isCompleted ? "line-through opacity-60" : "font-medium"}>
+                        {task.title}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {new Date(task.dueAt).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}
+                      </p>
+                      <span className="lencana">{urg.teks}</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button onClick={() => handleToggle(task)} className="btn text-xs">
+                        {task.isCompleted ? "Buka lagi" : "Selesai"}
+                      </button>
+                      <button onClick={() => handleDelete(task.id)} className="btn text-xs">Hapus</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        </main>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
